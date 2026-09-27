@@ -1,16 +1,17 @@
 # trichonaut-ci-workflows
 
-A shared [reusable GitHub Actions workflow](https://docs.github.com/en/actions/using-workflows/reusing-workflows)
-for the trichonaut project family's security scanning (`audit-ci` / Semgrep
-/ gitleaks). Public on purpose: GitHub does not allow a private repository's
-reusable workflow to be called from another private repository unless both
-are owned by the same organization — these repos are all under one personal
-account, so a public host is the only way to share this without making an
-existing project repo public. The workflow itself carries no
-account-specific secrets, ARNs, or credentials; every project-specific
-detail is passed in as an input by the caller.
+Shared [reusable GitHub Actions workflows](https://docs.github.com/en/actions/using-workflows/reusing-workflows)
+for the trichonaut project family: security scanning (`audit-ci` / Semgrep
+/ gitleaks) and, for the two plain-Astro sites, a shared quality job
+(lint + accessibility scan). Public on purpose: GitHub does not allow a
+private repository's reusable workflow to be called from another private
+repository unless both are owned by the same organization — these repos
+are all under one personal account, so a public host is the only way to
+share this without making an existing project repo public. Neither
+workflow carries account-specific secrets, ARNs, or credentials; every
+project-specific detail is passed in as an input by the caller.
 
-## Usage
+## Security scan
 
 In a caller repo's `.github/workflows/security.yml` (or as a job inside an
 existing workflow):
@@ -55,7 +56,7 @@ is only for *custom* secrets this workflow doesn't need, and Semgrep's
 own security-audit ruleset flags it as an unnecessary least-privilege
 violation if you add it anyway (confirmed by testing).
 
-## Inputs
+### Inputs
 
 | Input | Default | Purpose |
 |---|---|---|
@@ -64,7 +65,7 @@ violation if you add it anyway (confirmed by testing).
 | `semgrep_exclude` | `""` | Space-separated additional `--exclude` patterns for Semgrep (e.g. `terraform` when that's covered by a separate tool like Prowler instead). |
 | `cache_dependency_path` | `package-lock.json` | Passed to `actions/setup-node`'s `cache-dependency-path`. `setup-node` only looks for a lockfile at the repo root by default (not recursively) — override this when the repo's only lockfile lives elsewhere. |
 
-## Current callers and their config
+### Current callers and their config
 
 | Repo | `audit_dirs` | `audit_allowlist` | `semgrep_exclude` | `cache_dependency_path` |
 |---|---|---|---|---|
@@ -80,11 +81,35 @@ high-severity `extract-zip` advisories (reached via `pa11y-ci` ->
 tooling, tracked via each repo's own Dependabot alerts, not blocking on a
 fix that doesn't exist.
 
+## Astro quality
+
+In a caller repo's `.github/workflows/ci.yml`:
+
+```yaml
+jobs:
+  quality:
+    permissions:
+      contents: read
+    uses: JustFourShiggles/trichonaut-ci-workflows/.github/workflows/astro-quality.yml@main
+```
+
+Same permission-block requirement as the security scan above. No inputs:
+this only exists because trichonaut and trichonaut-catalog's `quality`
+jobs were byte-for-byte identical (`npm ci` / `npm run lint` / `npm run
+test:a11y`, same script names in both `package.json`s) — trichonaut-manage's
+own `quality` job is genuinely different (multiple package directories,
+a web SPA build, a preview-sync check) and was deliberately left as its
+own inline job rather than forced into this shape.
+
+### Current callers
+
+`trichonaut`, `trichonaut-catalog`.
+
 ## Versioning
 
 Callers reference `@main`. Since this repo has no independent release
-process yet, a breaking change to the workflow's inputs/behavior should
-bump to a tagged version (e.g. `@v1`) and update callers deliberately,
-rather than changing `@main`'s behavior out from under every caller at
-once. For now, with only 5 callers all maintained together, `@main` is
-simplest.
+process yet, a breaking change to either workflow's inputs/behavior
+should bump to a tagged version (e.g. `@v1`) and update callers
+deliberately, rather than changing `@main`'s behavior out from under
+every caller at once. For now, with only a handful of callers all
+maintained together, `@main` is simplest.
