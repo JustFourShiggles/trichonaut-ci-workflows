@@ -23,6 +23,15 @@ on:
           by a separate tool like Prowler).
         type: string
         default: ""
+      cache_dependency_path:
+        description: >-
+          Passed through to actions/setup-node's cache-dependency-path.
+          setup-node's own default only looks for a lockfile at the repo
+          root, not recursively -- override this when the repo's only
+          lockfile lives elsewhere (e.g. a nested package directory with
+          nothing at the root).
+        type: string
+        default: "package-lock.json"
 
 jobs:
   security:
@@ -39,6 +48,7 @@ jobs:
         with:
           node-version: 22
           cache: npm
+          cache-dependency-path: ${{ inputs.cache_dependency_path }}
 
       - name: npm audit
         env:
