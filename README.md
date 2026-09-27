@@ -26,6 +26,9 @@ on:
 
 jobs:
   security:
+    permissions:
+      contents: read
+      pull-requests: read
     uses: JustFourShiggles/trichonaut-ci-workflows/.github/workflows/security-scan.yml@main
     with:
       audit_dirs: "." # optional, defaults to "."
@@ -33,6 +36,17 @@ jobs:
       semgrep_exclude: "" # optional, space-separated --exclude patterns
     secrets: inherit
 ```
+
+**The caller's `permissions:` block is required, not optional** — a
+reusable workflow's own job-level permissions can only be *reduced* by
+its caller, never elevated beyond what the caller explicitly grants.
+Since most repos default to minimal implicit permissions when a caller
+job doesn't declare `permissions:` at all, omitting this block makes
+GitHub reject the whole call before it runs a single step
+(`conclusion: startup_failure`, zero jobs, no useful log — confirmed by
+testing). Match this workflow's own `contents: read` / `pull-requests:
+read` exactly; granting less will fail the same way, granting more is
+simply ignored (permissions can't be elevated up the chain either).
 
 `secrets: inherit` passes the caller's own `GITHUB_TOKEN` through — gitleaks
 needs it to comment on PRs, scoped to the caller repo, never this one.
