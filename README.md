@@ -34,7 +34,7 @@ jobs:
       audit_dirs: "." # optional, defaults to "."
       audit_allowlist: "" # optional, space-separated GHSA IDs
       semgrep_exclude: "" # optional, space-separated --exclude patterns
-    secrets: inherit
+      cache_dependency_path: "" # optional, only needed if there's no root-level lockfile
 ```
 
 **The caller's `permissions:` block is required, not optional** — a
@@ -48,8 +48,12 @@ testing). Match this workflow's own `contents: read` / `pull-requests:
 read` exactly; granting less will fail the same way, granting more is
 simply ignored (permissions can't be elevated up the chain either).
 
-`secrets: inherit` passes the caller's own `GITHUB_TOKEN` through — gitleaks
-needs it to comment on PRs, scoped to the caller repo, never this one.
+**Don't add `secrets: inherit`** — `GITHUB_TOKEN` is automatically
+available to a called reusable workflow's own jobs with no explicit
+passing needed (gitleaks uses it to comment on PRs). `secrets: inherit`
+is only for *custom* secrets this workflow doesn't need, and Semgrep's
+own security-audit ruleset flags it as an unnecessary least-privilege
+violation if you add it anyway (confirmed by testing).
 
 ## Inputs
 
@@ -58,16 +62,17 @@ needs it to comment on PRs, scoped to the caller repo, never this one.
 | `audit_dirs` | `.` | Space-separated directories to run `audit-ci` against, one per `package.json`/`package-lock.json` pair. |
 | `audit_allowlist` | `""` | Space-separated GHSA IDs to allowlist in `audit-ci` — for advisories with no upstream fix available. Applied identically to every directory in `audit_dirs`. |
 | `semgrep_exclude` | `""` | Space-separated additional `--exclude` patterns for Semgrep (e.g. `terraform` when that's covered by a separate tool like Prowler instead). |
+| `cache_dependency_path` | `package-lock.json` | Passed to `actions/setup-node`'s `cache-dependency-path`. `setup-node` only looks for a lockfile at the repo root by default (not recursively) — override this when the repo's only lockfile lives elsewhere. |
 
 ## Current callers and their config
 
-| Repo | `audit_dirs` | `audit_allowlist` | `semgrep_exclude` |
-|---|---|---|---|
-| trichonaut | `.` | `GHSA-jmr9-qjv8-65gv GHSA-7pqw-9j4j-h8q3` | — |
-| trichonaut-catalog | `.` | `GHSA-jmr9-qjv8-65gv GHSA-7pqw-9j4j-h8q3` | — |
-| trichonaut-manage | `. web lambdas/api lambdas/publish lambdas/image-processor` | `GHSA-jmr9-qjv8-65gv GHSA-7pqw-9j4j-h8q3` | — |
-| trichonaut-e2e | `.` | — | — |
-| trichonaut-infra | `scrapers/trichonaut-catalog` | — | `terraform` |
+| Repo | `audit_dirs` | `audit_allowlist` | `semgrep_exclude` | `cache_dependency_path` |
+|---|---|---|---|---|
+| trichonaut | `.` | `GHSA-jmr9-qjv8-65gv GHSA-7pqw-9j4j-h8q3` | — | — (default) |
+| trichonaut-catalog | `.` | `GHSA-jmr9-qjv8-65gv GHSA-7pqw-9j4j-h8q3` | — | — (default) |
+| trichonaut-manage | `. web lambdas/api lambdas/publish lambdas/image-processor` | `GHSA-jmr9-qjv8-65gv GHSA-7pqw-9j4j-h8q3` | — | — (default) |
+| trichonaut-e2e | `.` | — | — | — (default) |
+| trichonaut-infra | `scrapers/trichonaut-catalog` | — | `terraform` | `scrapers/trichonaut-catalog/package-lock.json` |
 
 The `GHSA-jmr9-qjv8-65gv`/`GHSA-7pqw-9j4j-h8q3` allowlist covers two
 high-severity `extract-zip` advisories (reached via `pa11y-ci` ->
