@@ -6,5 +6,8 @@ on:
 jobs:
   echo:
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: read
     steps:
       - run: echo "hello from reusable workflow"
