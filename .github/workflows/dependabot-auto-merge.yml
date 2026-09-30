@@ -1,0 +1,101 @@
+name: Dependabot auto-merge (reusable)
+
+# Mirrors the already-live pattern in trichonaut's own
+# auto-merge-listings.yml: trigger on workflow_run completion of the
+# caller's own CI workflow(s), verify success for that exact commit
+# ourselves, then merge directly -- rather than GitHub's native
+# "auto-merge" queue feature. That feature's wait-for-checks guarantee is
+# normally backed by required-status-check branch protection, which none
+# of these repos can configure at all (private repos on a plan tier where
+# the branch-protection API itself 403s: "Upgrade to GitHub Pro or make
+# this repository public").
+on:
+  workflow_call:
+    inputs:
+      gate_workflow_names:
+        description: >-
+          Comma-separated list of the caller repo's own PR-triggered
+          workflow `name:` fields that must ALL have succeeded, for the
+          exact commit that just completed, before a Dependabot PR is
+          merged (e.g. "CI,Security" or just "Security"). The caller's
+          own `on: workflow_run: workflows: [...]` list should name the
+          same workflows.
+        type: string
+        required: true
+
+jobs:
+  merge:
+    # Only ever acts on a *successful* completion -- if a gate workflow
+    # fails, this simply never runs for that event, so the PR is left
+    # alone (safe default) rather than needing an explicit failure branch.
+    if: >
+      github.event.workflow_run.event == 'pull_request' &&
+      github.event.workflow_run.conclusion == 'success' &&
+      github.event.workflow_run.head_repository.full_name == github.repository
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      pull-requests: write
+    steps:
+      - name: Merge if every gate workflow succeeded and the update is patch/minor
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # Routed through env rather than interpolated directly into the
+          # run: script -- a workflow_run's head_branch is attacker-
+          # controllable in principle, same reasoning as
+          # auto-merge-listings.yml's own identical comment.
+          HEAD_BRANCH: ${{ github.event.workflow_run.head_branch }}
+          HEAD_SHA: ${{ github.event.workflow_run.head_sha }}
+          GATE_NAMES: ${{ inputs.gate_workflow_names }}
+        run: |
+          PR_JSON=$(gh pr list --repo "$GITHUB_REPOSITORY" \
+            --head "$HEAD_BRANCH" --state open --json number,author -q '.[0]')
+          if [ -z "$PR_JSON" ] || [ "$PR_JSON" == "null" ]; then
+            echo "No open PR for branch $HEAD_BRANCH"
+            exit 0
+          fi
+          NUMBER=$(echo "$PR_JSON" | jq -r .number)
+          AUTHOR=$(echo "$PR_JSON" | jq -r .author.login)
+          if [ "$AUTHOR" != "dependabot[bot]" ]; then
+            echo "PR #$NUMBER's author ($AUTHOR) isn't Dependabot -- skipping"
+            exit 0
+          fi
+
+          # Every gate workflow must have its OWN successful run for this
+          # exact head SHA -- not just "the workflow that triggered us."
+          # Re-checked from scratch on every workflow_run event regardless
+          # of which one fired, so whichever gate finishes last is the one
+          # that actually triggers the merge.
+          IFS=',' read -ra NAMES <<< "$GATE_NAMES"
+          for NAME in "${NAMES[@]}"; do
+            CONCLUSION=$(gh run list --repo "$GITHUB_REPOSITORY" \
+              --workflow "$NAME" --branch "$HEAD_BRANCH" --limit 30 \
+              --json headSha,conclusion \
+              -q "[.[] | select(.headSha == \"$HEAD_SHA\")][0].conclusion // \"\"")
+            if [ "$CONCLUSION" != "success" ]; then
+              echo "Workflow '$NAME' hasn't succeeded yet for $HEAD_SHA (conclusion: ${CONCLUSION:-pending}) -- will re-check when it completes"
+              exit 0
+            fi
+            echo "Workflow '$NAME' succeeded for $HEAD_SHA"
+          done
+
+          # Dependabot embeds a real "update-type: version-update:semver-*"
+          # trailer in its own commit message (one entry per dependency for
+          # a grouped update) -- read that directly rather than guessing
+          # from the PR title, and rather than depending on a third-party
+          # action that expects pull_request event context we don't have
+          # here (this job runs off workflow_run).
+          UPDATE_TYPES=$(gh pr view "$NUMBER" --repo "$GITHUB_REPOSITORY" \
+            --json commits -q '.commits[0].messageBody' \
+            | grep -oP 'update-type: \K\S+' || true)
+          if [ -z "$UPDATE_TYPES" ]; then
+            echo "Could not determine update type for PR #$NUMBER -- leaving for manual review"
+            exit 0
+          fi
+          if echo "$UPDATE_TYPES" | grep -q "semver-major"; then
+            echo "PR #$NUMBER includes a major-version bump -- leaving for manual review"
+            exit 0
+          fi
+
+          echo "Merging PR #$NUMBER (update types: $(echo "$UPDATE_TYPES" | tr '\n' ' '))"
+          gh pr merge "$NUMBER" --repo "$GITHUB_REPOSITORY" --squash --delete-branch
