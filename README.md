@@ -105,6 +105,66 @@ own inline job rather than forced into this shape.
 
 `trichonaut`, `trichonaut-catalog`.
 
+## Dependabot auto-merge
+
+In a caller repo's `.github/workflows/dependabot-auto-merge.yml`:
+
+```yaml
+name: Dependabot auto-merge
+
+on:
+  workflow_run:
+    workflows: ["CI", "Security"] # must match gate_workflow_names below, and each workflow's own `name:`
+    types: [completed]
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  dependabot:
+    uses: JustFourShiggles/trichonaut-ci-workflows/.github/workflows/dependabot-auto-merge.yml@main
+    with:
+      gate_workflow_names: "CI,Security"
+```
+
+Merges a Dependabot PR the moment every workflow named in
+`gate_workflow_names` has its own successful run against that PR's exact
+head commit -- never GitHub's native "auto-merge" queue feature, since
+that needs required-status-check branch protection to guarantee it waits
+for checks, and none of these repos can enable branch protection at all
+(private repos on a plan tier where the branch-protection API 403s).
+Instead this re-checks every gate workflow's conclusion itself via `gh run
+list`, re-triggered on each one's own completion, and only merges once
+they've *all* succeeded for that same commit. Only ever merges
+patch/minor updates (reads Dependabot's own `update-type:` commit
+trailer) -- a major-version bump, or a grouped update where any single
+dependency in it is major, is left alone for manual review. Same
+`gh pr merge --squash --delete-branch` this account already uses in
+`trichonaut/auto-merge-listings.yml`.
+
+**The caller's `permissions:` block is required**, same reasoning as the
+security scan above -- this one needs `contents: write` (to merge/delete
+the branch) and `pull-requests: write` (to merge), not the security
+scan's `read`-only pair.
+
+**`gate_workflow_names` must list every workflow that runs on a
+Dependabot PR** for that repo, and the caller's own `on: workflow_run:
+workflows: [...]` must name the same ones -- otherwise a gate that isn't
+listed in `workflows: [...]` never triggers a re-check when it completes,
+and one that's listed there but missing from `gate_workflow_names` is
+never actually waited on.
+
+### Current callers and their config
+
+| Repo | `gate_workflow_names` |
+|---|---|
+| trichonaut | `CI,Security` (two separate workflows) |
+| trichonaut-catalog | `CI` (security is an embedded job inside it) |
+| trichonaut-manage | `CI` (security is an embedded job inside it) |
+| trichonaut-e2e | `Security` (no separate CI workflow exists) |
+| trichonaut-infra | `Security` (quality checks are local pre-commit hooks, not CI) |
+
 ## Versioning
 
 Callers reference `@main`. Since this repo has no independent release
