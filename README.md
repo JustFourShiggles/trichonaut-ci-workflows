@@ -120,6 +120,7 @@ on:
 permissions:
   contents: write
   pull-requests: write
+  actions: read
 
 jobs:
   dependabot:
@@ -145,8 +146,15 @@ dependency in it is major, is left alone for manual review. Same
 
 **The caller's `permissions:` block is required**, same reasoning as the
 security scan above -- this one needs `contents: write` (to merge/delete
-the branch) and `pull-requests: write` (to merge), not the security
-scan's `read`-only pair.
+the branch), `pull-requests: write` (to merge), and `actions: read` (the
+gate-workflow check's own `gh run list --workflow` calls), not the
+security scan's `read`-only pair. Missing `actions: read` specifically
+fails *after* the author check passes, with a `403: Resource not
+accessible by integration` on the first `gh run list --workflow` call --
+a real incident: the author check itself had its own bug for days
+(comparing against the wrong "is this Dependabot" string), which masked
+this one entirely, since every real Dependabot PR returned long before
+reaching the gate-check loop.
 
 **`gate_workflow_names` must list every workflow that runs on a
 Dependabot PR** for that repo, and the caller's own `on: workflow_run:
