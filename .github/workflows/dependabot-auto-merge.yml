@@ -36,6 +36,7 @@ jobs:
     permissions:
       contents: write
       pull-requests: write
+      actions: read # gh run list --workflow (the gate-workflow check below) needs this
     steps:
       - name: Merge if every gate workflow succeeded and the update is patch/minor
         env:
