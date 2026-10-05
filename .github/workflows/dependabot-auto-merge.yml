@@ -56,7 +56,14 @@ jobs:
           fi
           NUMBER=$(echo "$PR_JSON" | jq -r .number)
           AUTHOR=$(echo "$PR_JSON" | jq -r .author.login)
-          if [ "$AUTHOR" != "dependabot[bot]" ]; then
+          # gh's GraphQL-backed --json author returns "app/dependabot" for
+          # a Dependabot PR, NOT the classic REST-API "dependabot[bot]"
+          # login (confirmed: `gh api .../pulls/<n>` returns the latter,
+          # `gh pr view/list --json author` returns the former for the
+          # exact same PR) -- this previously compared against the wrong
+          # string, so every real Dependabot PR silently failed this
+          # check and was never merged.
+          if [ "$AUTHOR" != "app/dependabot" ]; then
             echo "PR #$NUMBER's author ($AUTHOR) isn't Dependabot -- skipping"
             exit 0
           fi
