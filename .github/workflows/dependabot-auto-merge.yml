@@ -88,22 +88,45 @@ jobs:
           done
 
           # Dependabot embeds a real "update-type: version-update:semver-*"
-          # trailer in its own commit message (one entry per dependency for
-          # a grouped update) -- read that directly rather than guessing
-          # from the PR title, and rather than depending on a third-party
-          # action that expects pull_request event context we don't have
-          # here (this job runs off workflow_run).
-          UPDATE_TYPES=$(gh pr view "$NUMBER" --repo "$GITHUB_REPOSITORY" \
-            --json commits -q '.commits[0].messageBody' \
-            | grep -oP 'update-type: \K\S+' || true)
+          # trailer in its own commit message for each DIRECT dependency
+          # bump -- read that directly rather than guessing from the PR
+          # title, and rather than depending on a third-party action that
+          # expects pull_request event context we don't have here (this
+          # job runs off workflow_run).
+          COMMIT_BODY=$(gh pr view "$NUMBER" --repo "$GITHUB_REPOSITORY" \
+            --json commits -q '.commits[0].messageBody')
+          UPDATE_TYPES=$(echo "$COMMIT_BODY" | grep -oP 'update-type: \K\S+' || true)
+
           if [ -z "$UPDATE_TYPES" ]; then
-            echo "Could not determine update type for PR #$NUMBER -- leaving for manual review"
-            exit 0
-          fi
-          if echo "$UPDATE_TYPES" | grep -q "semver-major"; then
+            # An INDIRECT/transitive dependency bump (dependency-type:
+            # indirect, usually a lockfile-only fix for a vulnerability
+            # deeper in the tree) never gets an update-type trailer at
+            # all -- confirmed on a real PR (postcss-selector-parser,
+            # dependency-type: indirect, no update-type line anywhere in
+            # the commit body). Fall back to parsing "from X.Y.Z to
+            # A.B.C" out of the PR title and comparing major versions
+            # ourselves, rather than leaving every indirect bump
+            # (including real security fixes) stuck forever.
+            if ! echo "$COMMIT_BODY" | grep -q 'dependency-type: indirect'; then
+              echo "Could not determine update type for PR #$NUMBER (no update-type trailer, not an indirect dependency either) -- leaving for manual review"
+              exit 0
+            fi
+            TITLE=$(gh pr view "$NUMBER" --repo "$GITHUB_REPOSITORY" --json title -q '.title')
+            FROM_MAJOR=$(echo "$TITLE" | sed -nE 's/.*from ([0-9]+)\..*/\1/p')
+            TO_MAJOR=$(echo "$TITLE" | sed -nE 's/.*to ([0-9]+)\..*/\1/p')
+            if [ -z "$FROM_MAJOR" ] || [ -z "$TO_MAJOR" ]; then
+              echo "PR #$NUMBER is an indirect dependency bump with no update-type trailer, and its title doesn't match 'from X to Y' either -- leaving for manual review"
+              exit 0
+            fi
+            if [ "$FROM_MAJOR" != "$TO_MAJOR" ]; then
+              echo "PR #$NUMBER's title implies a major-version bump ($FROM_MAJOR -> $TO_MAJOR) -- leaving for manual review"
+              exit 0
+            fi
+            echo "PR #$NUMBER is an indirect dependency bump with no update-type trailer, but its title implies a non-major bump ($FROM_MAJOR -> $TO_MAJOR) -- proceeding"
+          elif echo "$UPDATE_TYPES" | grep -q "semver-major"; then
             echo "PR #$NUMBER includes a major-version bump -- leaving for manual review"
             exit 0
           fi
 
-          echo "Merging PR #$NUMBER (update types: $(echo "$UPDATE_TYPES" | tr '\n' ' '))"
+          echo "Merging PR #$NUMBER (update types: ${UPDATE_TYPES:-none, indirect-dependency title fallback})"
           gh pr merge "$NUMBER" --repo "$GITHUB_REPOSITORY" --squash --delete-branch
